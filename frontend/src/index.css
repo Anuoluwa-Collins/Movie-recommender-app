@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 244 244 245;
+  --surface: 255 255 255;
+  --surface2: 235 237 240;
+  --line: 219 222 227;
+  --fg: 20 24 28;
+  --muted: 90 100 112;
+  --green: 0 168 64;
+  --blue: 28 146 196;
+  --orange: 214 110 0;
+}
+
+.dark {
+  --bg: 20 24 28;
+  --surface: 28 34 40;
+  --surface2: 44 52 64;
+  --line: 56 66 78;
+  --fg: 238 242 246;
+  --muted: 154 170 187;
+  --green: 0 224 84;
+  --blue: 64 188 244;
+  --orange: 255 140 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
