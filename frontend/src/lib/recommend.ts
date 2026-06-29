@@ -1,5 +1,6 @@
 import type { Movie, ScoredMovie } from '../types';
 import type { Mood } from './moods';
+import type { Region } from './regions';
 
 export interface ScoreContext {
   selectedGenreIds: number[];
@@ -7,6 +8,7 @@ export interface ScoreContext {
   /** candidate movie id -> how many seed movies surfaced it as related */
   relatedCounts: Map<number, number>;
   mood?: Mood;
+  region?: Region;
   genreNames: Map<number, string>;
 }
 
@@ -14,6 +16,7 @@ const WEIGHTS = {
   genre: 3,
   related: 5,
   mood: 2.5,
+  region: 1.2,
   quality: 2,
   recency: 0.6,
 };
@@ -50,14 +53,15 @@ function genreAffinity(seedMovies: Movie[], selectedGenreIds: number[]): Map<num
 
 /**
  * Pure ranking function. Combines genre affinity, relatedness to seed movies,
- * mood fit, quality (rating weighted by vote-count confidence) and a small
- * recency bonus into a single score, and returns the top results with
+ * mood fit, region fit, quality (rating weighted by vote-count confidence) and
+ * a small recency bonus into a single score, returning the top results with
  * human-readable reasons.
  */
 export function scoreCandidates(candidates: Movie[], ctx: ScoreContext, limit = 24): ScoredMovie[] {
   const seedIds = new Set(ctx.seedMovies.map((m) => m.id));
   const affinity = genreAffinity(ctx.seedMovies, ctx.selectedGenreIds);
   const moodSet = new Set<number>(ctx.mood ? ctx.mood.genreIds : []);
+  const regionLangs = new Set<string>(ctx.region ? ctx.region.languages : []);
   const maxAffinity = Math.max(1, ...Array.from(affinity.values()));
   const currentYear = new Date().getFullYear();
 
@@ -112,17 +116,24 @@ export function scoreCandidates(candidates: Movie[], ctx: ScoreContext, limit = 
       }
     }
 
-    // 4. Quality: rating scaled by how confident we are in it (vote count)
+    // 4. Region fit (origin is enforced upstream; this reinforces via language)
+    let regionScore = 0;
+    if (ctx.region && regionLangs.has(movie.original_language)) {
+      regionScore = WEIGHTS.region;
+      reasons.push(ctx.region.label + ' cinema');
+    }
+
+    // 5. Quality: rating scaled by how confident we are in it (vote count)
     const confidence = Math.min(1, Math.log10(movie.vote_count + 1) / 4);
     const qualityScore = (movie.vote_average / 10) * confidence * WEIGHTS.quality;
 
-    // 5. Recency: a gentle nudge toward newer films
+    // 6. Recency: a gentle nudge toward newer films
     const year = movie.release_date ? Number(movie.release_date.slice(0, 4)) : 0;
     const recencyScore = year
       ? Math.max(0, 1 - (currentYear - year) / 60) * WEIGHTS.recency
       : 0;
 
-    const score = genreScore + relatedScore + moodScore + qualityScore + recencyScore;
+    const score = genreScore + relatedScore + moodScore + regionScore + qualityScore + recencyScore;
 
     return { ...movie, score, reasons: reasons.slice(0, 3) };
   });

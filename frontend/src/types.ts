@@ -13,6 +13,7 @@ export interface Movie {
   vote_average: number;
   vote_count: number;
   popularity: number;
+  original_language: string;
   genre_ids: number[];
 }
 
@@ -25,6 +26,13 @@ export interface MovieDetails extends Omit<Movie, 'genre_ids'> {
 export interface ScoredMovie extends Movie {
   score: number;
   reasons: string[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  movies?: ScoredMovie[];
 }
 
 export type ThemeMode = 'light' | 'dark';

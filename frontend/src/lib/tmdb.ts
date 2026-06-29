@@ -77,12 +77,16 @@ export async function discoverMovies(
   genreIds: number[],
   sortBy = 'popularity.desc',
   page = 1,
+  originCountries: string[] = [],
 ): Promise<Movie[]> {
   const data = await request<Paged<Movie>>('/discover/movie', {
     with_genres: genreIds.join(','),
+    // Pipe means logical OR across countries on TMDB discover.
+    with_origin_country: originCountries.join('|'),
     sort_by: sortBy,
     include_adult: 'false',
-    'vote_count.gte': 100,
+    // Regional films have fewer votes, so relax the threshold when filtering by origin.
+    'vote_count.gte': originCountries.length ? 20 : 100,
     page,
   });
   return data.results;

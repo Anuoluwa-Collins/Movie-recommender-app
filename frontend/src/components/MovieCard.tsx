@@ -3,13 +3,18 @@ import type { ScoredMovie } from '../types';
 
 interface MovieCardProps {
   movie: ScoredMovie;
+  onSelect: (id: number) => void;
 }
 
-export function MovieCard({ movie }: MovieCardProps) {
+export function MovieCard({ movie, onSelect }: MovieCardProps) {
   const poster = posterUrl(movie.poster_path, 'w342');
   const year = movie.release_date ? movie.release_date.slice(0, 4) : '';
   return (
-    <div className="group overflow-hidden rounded-xl border border-line bg-surface transition hover:border-fg/30">
+    <button
+      type="button"
+      onClick={() => onSelect(movie.id)}
+      className="group block overflow-hidden rounded-xl border border-line bg-surface text-left transition hover:border-fg/30 focus:outline-none focus:ring-2 focus:ring-green/50"
+    >
       <div className="relative aspect-[2/3] bg-surface2">
         {poster ? (
           <img
@@ -40,6 +45,6 @@ export function MovieCard({ movie }: MovieCardProps) {
           </ul>
         ) : null}
       </div>
-    </div>
+    </button>
   );
 }
