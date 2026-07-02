@@ -1,8 +1,8 @@
 import type { Genre, Movie, MovieDetails } from '../types';
 
-const API_BASE = 'https://api.themoviedb.org/3';
+// All movie data now comes from our backend proxy — the TMDB key never leaves the server.
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 const IMG_BASE = 'https://image.tmdb.org/t/p';
-const API_KEY = import.meta.env.VITE_TMDB_API_KEY as string | undefined;
 
 const cache = new Map<string, unknown>();
 
@@ -13,63 +13,49 @@ interface Paged<T> {
   total_results: number;
 }
 
-function buildUrl(path: string, params: Record<string, string | number | undefined>): string {
+async function request<T>(
+  path: string,
+  params: Record<string, string | number | undefined> = {},
+): Promise<T> {
   const url = new URL(API_BASE + path);
-  url.searchParams.set('api_key', API_KEY || '');
   for (const key in params) {
     const value = params[key];
     if (value !== undefined && value !== '') {
       url.searchParams.set(key, String(value));
     }
   }
-  return url.toString();
-}
+  const cacheKey = url.toString();
+  const cached = cache.get(cacheKey);
+  if (cached) return cached as T;
 
-async function request<T>(
-  path: string,
-  params: Record<string, string | number | undefined> = {},
-): Promise<T> {
-  if (!API_KEY) {
-    throw new Error('Missing TMDB API key. Add VITE_TMDB_API_KEY to your .env file.');
-  }
-  const url = buildUrl(path, params);
-  const cached = cache.get(url);
-  if (cached) {
-    return cached as T;
-  }
-  const res = await fetch(url);
+  const res = await fetch(url.toString());
   if (!res.ok) {
-    throw new Error('TMDB request failed (' + res.status + ')');
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail?.detail ?? `Request failed (${res.status})`);
   }
   const data = (await res.json()) as T;
-  cache.set(url, data);
+  cache.set(cacheKey, data);
   return data;
 }
 
+// Always ready — API key is server-side now
 export function hasApiKey(): boolean {
-  return Boolean(API_KEY);
+  return true;
 }
 
 export function posterUrl(path: string | null, size = 'w342'): string | null {
-  if (!path) {
-    return null;
-  }
-  return IMG_BASE + '/' + size + path;
+  if (!path) return null;
+  return `${IMG_BASE}/${size}${path}`;
 }
 
 export async function getGenres(): Promise<Genre[]> {
-  const data = await request<{ genres: Genre[] }>('/genre/movie/list');
+  const data = await request<{ genres: Genre[] }>('/tmdb/genres');
   return data.genres;
 }
 
 export async function searchMovies(query: string): Promise<Movie[]> {
-  if (!query.trim()) {
-    return [];
-  }
-  const data = await request<Paged<Movie>>('/search/movie', {
-    query,
-    include_adult: 'false',
-  });
+  if (!query.trim()) return [];
+  const data = await request<Paged<Movie>>('/tmdb/search', { q: query });
   return data.results;
 }
 
@@ -79,13 +65,10 @@ export async function discoverMovies(
   page = 1,
   originCountries: string[] = [],
 ): Promise<Movie[]> {
-  const data = await request<Paged<Movie>>('/discover/movie', {
+  const data = await request<Paged<Movie>>('/tmdb/discover', {
     with_genres: genreIds.join(','),
-    // Pipe means logical OR across countries on TMDB discover.
     with_origin_country: originCountries.join('|'),
     sort_by: sortBy,
-    include_adult: 'false',
-    // Regional films have fewer votes, so relax the threshold when filtering by origin.
     'vote_count.gte': originCountries.length ? 20 : 100,
     page,
   });
@@ -93,15 +76,15 @@ export async function discoverMovies(
 }
 
 export async function getRecommendations(movieId: number): Promise<Movie[]> {
-  const data = await request<Paged<Movie>>('/movie/' + movieId + '/recommendations');
+  const data = await request<Paged<Movie>>(`/tmdb/movie/${movieId}/recommendations`);
   return data.results;
 }
 
 export async function getSimilar(movieId: number): Promise<Movie[]> {
-  const data = await request<Paged<Movie>>('/movie/' + movieId + '/similar');
+  const data = await request<Paged<Movie>>(`/tmdb/movie/${movieId}/similar`);
   return data.results;
 }
 
 export async function getMovie(movieId: number): Promise<MovieDetails> {
-  return request<MovieDetails>('/movie/' + movieId);
+  return request<MovieDetails>(`/tmdb/movie/${movieId}`);
 }

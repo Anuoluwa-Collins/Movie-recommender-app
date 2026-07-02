@@ -10,7 +10,9 @@ import { Spinner } from './components/Spinner';
 import { EmptyState } from './components/EmptyState';
 import { ChatPanel } from './components/ChatPanel';
 import { MovieDetailModal } from './components/MovieDetailModal';
+import { AuthModal } from './components/AuthModal';
 import { useTheme } from './hooks/useTheme';
+import { useAuth } from './hooks/useAuth';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import {
   getGenres,
@@ -18,12 +20,12 @@ import {
   getRecommendations,
   getSimilar,
   searchMovies,
-  hasApiKey,
 } from './lib/tmdb';
 import { getMood } from './lib/moods';
 import { getRegion } from './lib/regions';
 import { scoreCandidates } from './lib/recommend';
 import { parseMessage } from './lib/chat';
+import type { AuthView } from './hooks/useAuth';
 import type { ChatMessage, Genre, Movie, ScoredMovie } from './types';
 
 function uid(): string {
@@ -39,6 +41,8 @@ interface PipelineParams {
 
 export default function App() {
   const { theme, toggle } = useTheme();
+  const { user, authError, authLoading, login, register, logout, clearAuthError } = useAuth();
+
   const [genres, setGenres] = useState<Genre[]>([]);
   const [selectedGenres, setSelectedGenres] = useState<number[]>([]);
   const [seedMovies, setSeedMovies] = useState<Movie[]>([]);
@@ -53,6 +57,16 @@ export default function App() {
   const [chatMessages, setChatMessages] = useLocalStorage<ChatMessage[]>('reel-chat', []);
   const [chatBusy, setChatBusy] = useState(false);
 
+  // Auth modal state
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authView, setAuthView] = useState<AuthView>('login');
+
+  function openAuth(view: AuthView = 'login') {
+    setAuthView(view);
+    clearAuthError();
+    setAuthOpen(true);
+  }
+
   const genreNames = useMemo(() => {
     const map = new Map<number, string>();
     genres.forEach((genre) => map.set(genre.id, genre.name));
@@ -60,12 +74,9 @@ export default function App() {
   }, [genres]);
 
   useEffect(() => {
-    if (!hasApiKey()) {
-      return;
-    }
     getGenres()
       .then(setGenres)
-      .catch(() => setError('Could not load genres. Check your TMDB API key.'));
+      .catch(() => setError('Could not reach the Reel backend. Is it running on port 8000?'));
   }, []);
 
   function toggleGenre(id: number) {
@@ -95,7 +106,6 @@ export default function App() {
   const hasInput =
     selectedGenres.length > 0 || seedMovies.length > 0 || mood !== null || region !== null;
 
-  // Shared recommendation pipeline used by both the Recommend button and chat.
   async function buildRecommendations(params: PipelineParams): Promise<ScoredMovie[]> {
     const moodObj = getMood(params.moodId);
     const regionObj = getRegion(params.regionId);
@@ -113,9 +123,7 @@ export default function App() {
       }
     }
 
-    const genrePool = Array.from(
-      new Set(params.genreIds.concat(moodObj ? moodObj.genreIds : [])),
-    );
+    const genrePool = Array.from(new Set(params.genreIds.concat(moodObj ? moodObj.genreIds : [])));
     const originCountries = regionObj ? regionObj.countries : [];
 
     if (genrePool.length || originCountries.length) {
@@ -134,14 +142,7 @@ export default function App() {
 
     return scoreCandidates(
       candidates,
-      {
-        selectedGenreIds: params.genreIds,
-        seedMovies: params.seeds,
-        relatedCounts,
-        mood: moodObj,
-        region: regionObj,
-        genreNames,
-      },
+      { selectedGenreIds: params.genreIds, seedMovies: params.seeds, relatedCounts, mood: moodObj, region: regionObj, genreNames },
       25,
     );
   }
@@ -152,10 +153,7 @@ export default function App() {
     setTouched(true);
     try {
       const scored = await buildRecommendations({
-        genreIds: selectedGenres,
-        seeds: seedMovies,
-        moodId: mood,
-        regionId: region,
+        genreIds: selectedGenres, seeds: seedMovies, moodId: mood, regionId: region,
       });
       setResults(scored);
     } catch (err) {
@@ -167,27 +165,15 @@ export default function App() {
   }
 
   function summarise(params: PipelineParams, count: number): string {
-    if (!count) {
-      return "I couldn't find good matches. Try naming a genre, mood, region, or a movie you liked.";
-    }
+    if (!count) return "I couldn't find good matches. Try naming a genre, mood, region, or a movie you liked.";
     const parts: string[] = [];
     const moodObj = getMood(params.moodId);
     const regionObj = getRegion(params.regionId);
-    if (moodObj) {
-      parts.push('a ' + moodObj.label.toLowerCase() + ' vibe');
-    }
-    const namedGenres = params.genreIds
-      .map((id) => genreNames.get(id))
-      .filter((name): name is string => Boolean(name));
-    if (namedGenres.length) {
-      parts.push(namedGenres.join(', '));
-    }
-    if (regionObj) {
-      parts.push(regionObj.label);
-    }
-    if (params.seeds.length) {
-      parts.push('films like ' + params.seeds.map((s) => s.title).join(', '));
-    }
+    if (moodObj) parts.push('a ' + moodObj.label.toLowerCase() + ' vibe');
+    const namedGenres = params.genreIds.map((id) => genreNames.get(id)).filter((n): n is string => Boolean(n));
+    if (namedGenres.length) parts.push(namedGenres.join(', '));
+    if (regionObj) parts.push(regionObj.label);
+    if (params.seeds.length) parts.push('films like ' + params.seeds.map((s) => s.title).join(', '));
     const lead = 'Here are ' + count + ' picks';
     const tail = '. Tap any card for the synopsis.';
     return parts.length ? lead + ' for ' + parts.join(' + ') + tail : lead + tail;
@@ -198,85 +184,49 @@ export default function App() {
     setChatBusy(true);
     try {
       const parsed = parseMessage(text, genres);
-
       const resolvedSeeds: Movie[] = [];
       for (const title of parsed.seedTitles) {
         const found = await searchMovies(title);
-        if (found[0]) {
-          resolvedSeeds.push(found[0]);
-        }
+        if (found[0]) resolvedSeeds.push(found[0]);
       }
-
       const mergedGenres = parsed.genreIds.length ? parsed.genreIds : selectedGenres;
       const mergedMood = parsed.moodId ?? mood;
       const mergedRegion = parsed.regionId ?? region;
       const mergedSeeds = resolvedSeeds.length
-        ? Array.from(
-            new Map(
-              seedMovies.concat(resolvedSeeds).map((m) => [m.id, m] as [number, Movie]),
-            ).values(),
-          )
+        ? Array.from(new Map(seedMovies.concat(resolvedSeeds).map((m) => [m.id, m] as [number, Movie])).values())
         : seedMovies;
 
-      // Reflect what the assistant understood back into the controls.
       setSelectedGenres(mergedGenres);
       setMood(mergedMood);
       setRegion(mergedRegion);
       setSeedMovies(mergedSeeds);
 
-      const params: PipelineParams = {
-        genreIds: mergedGenres,
-        seeds: mergedSeeds,
-        moodId: mergedMood,
-        regionId: mergedRegion,
-      };
+      const params: PipelineParams = { genreIds: mergedGenres, seeds: mergedSeeds, moodId: mergedMood, regionId: mergedRegion };
       const scored = await buildRecommendations(params);
       setResults(scored);
       setTouched(true);
 
       setChatMessages((prev) =>
-        prev.concat({
-          id: uid(),
-          role: 'assistant',
-          text: summarise(params, scored.length),
-          movies: scored.slice(0, 4),
-        }),
+        prev.concat({ id: uid(), role: 'assistant', text: summarise(params, scored.length), movies: scored.slice(0, 4) }),
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong.';
-      setChatMessages((prev) =>
-        prev.concat({ id: uid(), role: 'assistant', text: 'Sorry, I hit an error: ' + message }),
-      );
+      setChatMessages((prev) => prev.concat({ id: uid(), role: 'assistant', text: 'Sorry, I hit an error: ' + message }));
     } finally {
       setChatBusy(false);
     }
   }
 
-  if (!hasApiKey()) {
-    return (
-      <div className="min-h-screen bg-bg text-fg">
-        <Header theme={theme} onToggleTheme={toggle} />
-        <main className="mx-auto max-w-2xl px-4 py-16">
-          <div className="rounded-xl border border-line bg-surface p-6">
-            <h2 className="text-lg font-semibold">Add your TMDB API key</h2>
-            <p className="mt-2 text-sm text-muted">
-              Create a file named .env in the project root containing:
-            </p>
-            <pre className="mt-3 overflow-x-auto rounded-lg bg-surface2 p-3 text-xs text-fg">
-              VITE_TMDB_API_KEY=your_key_here
-            </pre>
-            <p className="mt-3 text-sm text-muted">
-              Get a free key at themoviedb.org under Settings, API (v3). Then restart the dev server.
-            </p>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-bg text-fg">
-      <Header theme={theme} onToggleTheme={toggle} />
+      <Header
+        theme={theme}
+        onToggleTheme={toggle}
+        user={user}
+        onOpenAuth={() => openAuth('login')}
+        onLogout={logout}
+      />
+
       <main className="mx-auto max-w-6xl px-4 py-8">
         <section className="grid gap-8 lg:grid-cols-[320px_1fr]">
           <div className="space-y-6">
@@ -303,11 +253,23 @@ export default function App() {
             </div>
 
             <div>
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
-                Genres
-              </h2>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Genres</h2>
               <GenreSelector genres={genres} selected={selectedGenres} onToggle={toggleGenre} />
             </div>
+
+            {/* Prompt to sign in for extra features */}
+            {!user && (
+              <p className="text-xs text-muted">
+                <button
+                  type="button"
+                  onClick={() => openAuth('register')}
+                  className="text-green underline-offset-2 hover:underline"
+                >
+                  Create an account
+                </button>{' '}
+                to save favourites and track what you've watched.
+              </p>
+            )}
 
             <div className="flex gap-2">
               <button
@@ -316,7 +278,7 @@ export default function App() {
                 disabled={!hasInput || loading}
                 className="flex-1 rounded-lg bg-green px-4 py-2.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {loading ? 'Finding...' : 'Recommend movies'}
+                {loading ? 'Finding…' : 'Recommend movies'}
               </button>
               <button
                 type="button"
@@ -329,27 +291,27 @@ export default function App() {
           </div>
 
           <div>
-            {error ? (
+            {error && (
               <div className="mb-4 rounded-lg border border-orange/40 bg-orange/10 px-4 py-3 text-sm text-orange">
                 {error}
               </div>
-            ) : null}
-            {loading ? <Spinner label="Scoring the best matches for you" /> : null}
-            {!loading && results.length > 0 ? (
+            )}
+            {loading && <Spinner label="Scoring the best matches for you" />}
+            {!loading && results.length > 0 && (
               <MovieGrid movies={results} onSelect={setActiveMovieId} />
-            ) : null}
-            {!loading && results.length === 0 && touched && !error ? (
+            )}
+            {!loading && results.length === 0 && touched && !error && (
               <EmptyState
                 title="No matches found"
                 hint="Try different genres, another mood, a region, or add a movie you liked."
               />
-            ) : null}
-            {!loading && !touched ? (
+            )}
+            {!loading && !touched && (
               <EmptyState
                 title="Tell us what you are in the mood for"
                 hint="Pick a mood, region, or genres, add movies you love, or just chat with Reel."
               />
-            ) : null}
+            )}
           </div>
         </section>
       </main>
@@ -362,13 +324,25 @@ export default function App() {
         onClear={() => setChatMessages([])}
       />
 
-      {activeMovieId !== null ? (
+      {activeMovieId !== null && (
         <MovieDetailModal
           movieId={activeMovieId}
           onClose={() => setActiveMovieId(null)}
           onSelectMovie={setActiveMovieId}
         />
-      ) : null}
+      )}
+
+      {authOpen && (
+        <AuthModal
+          view={authView}
+          onSwitchView={setAuthView}
+          onLogin={login}
+          onRegister={register}
+          onClose={() => setAuthOpen(false)}
+          error={authError}
+          loading={authLoading}
+        />
+      )}
     </div>
   );
 }

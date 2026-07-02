@@ -36,3 +36,9 @@ export interface ChatMessage {
 }
 
 export type ThemeMode = 'light' | 'dark';
+
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+}
