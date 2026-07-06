@@ -61,7 +61,11 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authView, setAuthView] = useState<AuthView>('login');
 
-
+  function openAuth(view: AuthView = 'login') {
+    setAuthView(view);
+    clearAuthError();
+    setAuthOpen(true);
+  }
 
   const genreNames = useMemo(() => {
     const map = new Map<number, string>();
