@@ -67,11 +67,7 @@ export default function App() {
     setAuthOpen(true);
   }
 
-  const genreNames = useMemo(() => {
-    const map = new Map<number, string>();
-    genres.forEach((genre) => map.set(genre.id, genre.name));
-    return map;
-  }, [genres]);
+
 
   useEffect(() => {
     getGenres()
