@@ -9,7 +9,7 @@ from app import models, schemas
 from app.auth import get_current_user_optional
 from app.config import settings
 from app.database import get_db
-from app.main import limiter
+from app.limiter import limiter
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
 logger = logging.getLogger("reel.recommend")

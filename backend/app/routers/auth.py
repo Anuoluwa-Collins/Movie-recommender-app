@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.database import get_db
+from app.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

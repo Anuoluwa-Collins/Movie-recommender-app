@@ -2,24 +2,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.database import Base, engine
+from app.limiter import limiter          # ← now imported, not defined here
 from app.routers import auth, favourites, history, tmdb, recommend
-
-# One shared limiter instance, keyed by client IP. Individual routes opt in
-# with @limiter.limit(...) — see routers/auth.py and routers/recommend.py.
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings.validate_for_production()          # raises loudly if misconfigured
-    Base.metadata.create_all(bind=engine)        # Alembic handles real migrations
+    settings.validate_for_production()
+    Base.metadata.create_all(bind=engine)
     yield
 
 
@@ -33,8 +28,6 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Explicit allowlists instead of "*" — narrows the attack surface even though
-# the frontend only ever needs these.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,
@@ -46,7 +39,6 @@ app.add_middleware(
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    """Baseline hardening headers — cheap, no downside."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
