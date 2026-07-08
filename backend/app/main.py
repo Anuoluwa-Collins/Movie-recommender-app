@@ -5,8 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import auth, favourites, history, tmdb
-
+from app.routers import auth, favourites, history, tmdb, recommend
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,7 +33,7 @@ app.include_router(auth.router)
 app.include_router(tmdb.router)
 app.include_router(favourites.router)
 app.include_router(history.router)
-
+app.include_router(recommend.router)
 
 @app.get("/health", tags=["meta"])
 def health():
