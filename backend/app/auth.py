@@ -1,64 +1,56 @@
-from datetime import datetime, timedelta, timezone
-
-import bcrypt
-from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.database import get_db
 from app import models, schemas
+from app.auth import create_access_token, get_current_user, hash_password, verify_password
+from app.database import get_db
+from app.main import limiter
 
-oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-ALGORITHM = "HS256"
-
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+@router.post("/register", response_model=schemas.UserOut, status_code=201)
+@limiter.limit("5/minute")  # throttle account-creation spam
+def register(request: Request, body: schemas.UserCreate, db: Session = Depends(get_db)):
+    if db.query(models.User).filter(models.User.email == body.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    if db.query(models.User).filter(models.User.username == body.username).first():
+        raise HTTPException(status_code=409, detail="Username already taken")
 
-
-def create_access_token(user_id: int) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.access_token_expire_minutes
+    user = models.User(
+        username=body.username,
+        email=body.email,
+        hashed_password=hash_password(body.password),
     )
-    payload = {"sub": str(user_id), "exp": expire}
-    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
-
-def get_current_user_optional(
-    token: str | None = Depends(oauth2_scheme_optional),
-    db: Session = Depends(get_db)
-) -> models.User | None:
-    if not token:
-        return None
-    try:
-        return get_current_user(token=token, db=db)
-    except:
-        return None
-
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> models.User:
-    credentials_error = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        user_id_str: str | None = payload.get("sub")
-        if user_id_str is None:
-            raise credentials_error
-        token_data = schemas.TokenData(user_id=int(user_id_str))
-    except (JWTError, ValueError):
-        raise credentials_error
-
-    user = db.query(models.User).filter(models.User.id == token_data.user_id).first()
-    if user is None or not user.is_active:
-        raise credentials_error
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user
+
+
+@router.post("/login", response_model=schemas.Token)
+@limiter.limit("10/minute")  # slows brute-force / credential-stuffing attempts
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = (
+        db.query(models.User)
+        .filter((models.User.email == form.username) | (models.User.username == form.username))
+        .first()
+    )
+    # Same generic message whether the account doesn't exist or the password
+    # is wrong — avoids leaking which one it was.
+    if not user or not verify_password(form.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email/username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
+
+    return {"access_token": create_access_token(user.id)}
+
+
+@router.get("/me", response_model=schemas.UserOut)
+def me(current_user: models.User = Depends(get_current_user)):
+    return current_user
