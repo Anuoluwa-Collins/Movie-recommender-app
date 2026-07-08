@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { User } from '../types';
 
@@ -8,6 +8,12 @@ export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+
+  // If any request comes back 401, api.ts clears the token and calls this —
+  // reflect that in UI state so stale "logged in" UI doesn't linger.
+  useEffect(() => {
+    api.onUnauthorized(() => setUser(null));
+  }, []);
 
   const login = useCallback(async (emailOrUsername: string, password: string) => {
     setAuthLoading(true);

@@ -14,6 +14,7 @@ import { AuthModal } from './components/AuthModal';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { getAiRecommendations, type AiRecommendedFilm } from "./lib/api";
 import {
   getGenres,
   discoverMovies,
@@ -56,6 +57,13 @@ export default function App() {
   const [activeMovieId, setActiveMovieId] = useState<number | null>(null);
   const [chatMessages, setChatMessages] = useLocalStorage<ChatMessage[]>('reel-chat', []);
   const [chatBusy, setChatBusy] = useState(false);
+
+  const [aiResults, setAiResults] = useState<AiRecommendedFilm[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiController, setAiController] = useState<AbortController | null>(
+    null,
+  );
 
   // Auth modal state
   const [authOpen, setAuthOpen] = useState(false);
@@ -217,13 +225,43 @@ export default function App() {
     }
   }
 
+  async function askAi() {
+    aiController?.abort();
+    const controller = new AbortController();
+    setAiController(controller);
+
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const genreNamesSelected = selectedGenres
+        .map((id) => genreNames.get(id))
+        .filter((n): n is string => Boolean(n));
+
+      const films = await getAiRecommendations({
+        genres: genreNamesSelected,
+        mood: mood ?? "",
+        seedTitles: seedMovies.map((m) => m.title),
+        region: region ?? "",
+        signal: controller.signal,
+      });
+      setAiResults(films);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setAiError(
+        err instanceof Error ? err.message : "AI recommendations failed.",
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-bg text-fg">
       <Header
         theme={theme}
         onToggleTheme={toggle}
         user={user}
-        onOpenAuth={() => openAuth('login')}
+        onOpenAuth={() => openAuth("login")}
         onLogout={logout}
       />
 
@@ -234,14 +272,19 @@ export default function App() {
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
                 Movies you liked
               </h2>
-              <MovieSearch onAdd={addSeed} selectedIds={seedMovies.map((m) => m.id)} />
+              <MovieSearch
+                onAdd={addSeed}
+                selectedIds={seedMovies.map((m) => m.id)}
+              />
               <div className="mt-3">
                 <SeedMovies movies={seedMovies} onRemove={removeSeed} />
               </div>
             </div>
 
             <div>
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Mood</h2>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
+                Mood
+              </h2>
               <MoodSelector selected={mood} onSelect={setMood} />
             </div>
 
@@ -253,8 +296,14 @@ export default function App() {
             </div>
 
             <div>
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Genres</h2>
-              <GenreSelector genres={genres} selected={selectedGenres} onToggle={toggleGenre} />
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
+                Genres
+              </h2>
+              <GenreSelector
+                genres={genres}
+                selected={selectedGenres}
+                onToggle={toggleGenre}
+              />
             </div>
 
             {/* Prompt to sign in for extra features */}
@@ -262,11 +311,11 @@ export default function App() {
               <p className="text-xs text-muted">
                 <button
                   type="button"
-                  onClick={() => openAuth('register')}
+                  onClick={() => openAuth("register")}
                   className="text-green underline-offset-2 hover:underline"
                 >
                   Create an account
-                </button>{' '}
+                </button>{" "}
                 to save favourites and track what you've watched.
               </p>
             )}
@@ -278,7 +327,7 @@ export default function App() {
                 disabled={!hasInput || loading}
                 className="flex-1 rounded-lg bg-green px-4 py-2.5 text-sm font-semibold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {loading ? 'Finding…' : 'Recommend movies'}
+                {loading ? "Finding…" : "Recommend movies"}
               </button>
               <button
                 type="button"
@@ -286,6 +335,14 @@ export default function App() {
                 className="rounded-lg border border-line px-4 py-2.5 text-sm text-muted transition hover:text-fg"
               >
                 Reset
+              </button>
+              <button
+                type="button"
+                onClick={askAi}
+                disabled={!hasInput || aiLoading}
+                className="rounded-lg border border-green px-4 py-2.5 text-sm font-semibold text-green transition hover:bg-green/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {aiLoading ? "Asking AI…" : "Ask AI ↗"}
               </button>
             </div>
           </div>

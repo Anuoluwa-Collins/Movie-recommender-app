@@ -1,12 +1,14 @@
 /**
- * Auth API client — talks to the backend /auth/* endpoints.
- * The JWT is kept in memory only (not localStorage) to avoid XSS exposure.
- * We export getToken() so other fetch calls can attach the Authorization header.
+ * API client — talks to the backend's auth, favourites, history, and
+ * /recommend endpoints. The JWT is kept in memory only (never localStorage)
+ * to avoid XSS token theft; it's lost on refresh by design, which is a
+ * reasonable trade-off for this app's risk profile.
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 
 let _token: string | null = null;
+let _onUnauthorized: (() => void) | null = null;
 
 export function getToken(): string | null {
   return _token;
@@ -20,6 +22,11 @@ export function clearToken(): void {
   _token = null;
 }
 
+/** useAuth.ts registers a callback so an expired/invalid token forces a clean logout. */
+export function onUnauthorized(cb: () => void): void {
+  _onUnauthorized = cb;
+}
+
 async function authRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(API_BASE + path, {
     ...options,
@@ -29,11 +36,16 @@ async function authRequest<T>(path: string, options: RequestInit = {}): Promise<
       ...(options.headers ?? {}),
     },
   });
+
+  if (res.status === 401) {
+    clearToken();
+    _onUnauthorized?.();
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.detail ?? `Request failed (${res.status})`);
   }
-  // 204 No Content — return empty object
   if (res.status === 204) return {} as T;
   return res.json() as Promise<T>;
 }
@@ -60,7 +72,6 @@ export async function register(
 }
 
 export async function login(emailOrUsername: string, password: string): Promise<UserOut> {
-  // FastAPI's OAuth2PasswordRequestForm expects form-encoded data
   const form = new URLSearchParams({ username: emailOrUsername, password });
   const res = await fetch(API_BASE + '/auth/login', {
     method: 'POST',
@@ -150,4 +161,35 @@ export async function addToHistory(
 
 export async function clearHistory(): Promise<void> {
   return authRequest<void>('/history/', { method: 'DELETE' });
+}
+
+// ── AI recommendations ───────────────────────────────────────────────────────
+
+export interface AiRecommendedFilm {
+  title: string;
+  year: number;
+  genre: string;
+  match_pct: number;
+  description: string;
+  why: string;
+}
+
+export async function getAiRecommendations(params: {
+  genres: string[];
+  mood: string;
+  seedTitles: string[];
+  region: string;
+  signal?: AbortSignal;
+}): Promise<AiRecommendedFilm[]> {
+  const data = await authRequest<{ recommendations: AiRecommendedFilm[] }>('/recommend/', {
+    method: 'POST',
+    signal: params.signal,
+    body: JSON.stringify({
+      genres: params.genres,
+      mood: params.mood,
+      seed_titles: params.seedTitles,
+      region: params.region,
+    }),
+  });
+  return data.recommendations;
 }
