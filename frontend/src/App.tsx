@@ -344,6 +344,44 @@ export default function App() {
               >
                 {aiLoading ? "Asking AI…" : "Ask AI ↗"}
               </button>
+              {aiError && (
+                <p className="mt-4 rounded-lg border border-orange/40 bg-orange/10 px-3 py-2 text-sm text-orange">
+                  {aiError}
+                </p>
+              )}
+
+              {aiResults.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  <h2 className="text-sm font-semibold text-muted">
+                    AI picks for you
+                  </h2>
+                  {aiResults.map((film, i) => (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-line bg-surface p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold text-fg">
+                            {film.title}{" "}
+                            <span className="font-normal text-muted">
+                              ({film.year})
+                            </span>
+                          </h3>
+                          <p className="text-xs text-muted">{film.genre}</p>
+                        </div>
+                        <span className="whitespace-nowrap rounded-full bg-green/10 px-2 py-0.5 text-xs font-medium text-green">
+                          {film.match_pct}% match
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-fg/80">
+                        {film.description}
+                      </p>
+                      <p className="mt-2 text-xs text-green">✨ {film.why}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
